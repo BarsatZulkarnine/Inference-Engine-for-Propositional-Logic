@@ -11,22 +11,22 @@ def parse_file(filename):
         return clauses, ask
 
 def evaluate(clause, assignment):
-    import re
-    tokens = re.findall(r'\w+|=>|&|\||!', clause)
+    tokens = re.findall(r'\w+|<=>|=>|&|\||\|\||!|~', clause)
     stack = []
-
-    precedence = {'!': 3, '&': 2, '|': 1, '=>': 0}
+    precedence = {'~': 4, '!': 4, '&': 3, '||': 2, '|': 2, '=>': 1, '<=>': 0}
     op_stack = []
 
     def apply_operator(op, right, left=None):
-        if op == '!':
+        if op in ('!', '~'):
             return not right
         elif op == '&':
             return left and right
-        elif op == '|':
+        elif op in ('|', '||'):
             return left or right
         elif op == '=>':
             return not left or right
+        elif op == '<=>':
+            return left == right
 
     for token in tokens:
         if token.isalnum():
@@ -35,7 +35,7 @@ def evaluate(clause, assignment):
             while (op_stack and precedence[op_stack[-1]] >= precedence[token]):
                 operator = op_stack.pop()
                 right = stack.pop()
-                left = stack.pop() if stack and operator != '!' else None
+                left = stack.pop() if stack and operator not in ('!', '~') else None
                 stack.append(apply_operator(operator, right, left))
             op_stack.append(token)
         else:
@@ -44,7 +44,7 @@ def evaluate(clause, assignment):
     while op_stack:
         operator = op_stack.pop()
         right = stack.pop()
-        left = stack.pop() if stack and operator != '!' else None
+        left = stack.pop() if stack and operator not in ('!', '~') else None
         stack.append(apply_operator(operator, right, left))
 
     return stack[0]
@@ -63,35 +63,50 @@ def truth_table_check(kb, query):
 
 def forward_chaining(kb, query):
     inferred = set()
-    agenda = [clause for clause in kb if "=>" not in clause]
+    agenda = [clause for clause in kb if "=>" not in clause and "<=>" not in clause]
     inferred.update(agenda)
-    activated = True
+    agenda_queue = list(agenda)  # Maintain order of inference
 
+    activated = True
     while activated:
         activated = False
         for clause in kb:
             if "=>" in clause:
-                premises, conclusion = clause.split("=>")
+                parts = clause.split("=>")
+                if len(parts) != 2:
+                    continue
+                premises, conclusion = parts
                 premises = [prem.strip() for prem in premises.split("&")]
                 conclusion = conclusion.strip()
                 if conclusion not in inferred:
                     if all(prem in inferred for prem in premises):
                         inferred.add(conclusion)
-                        agenda.append(conclusion)  # Add to agenda to reconsider other rules
+                        agenda_queue.append(conclusion)
                         activated = True
                         if conclusion == query:
-                            break  # Exit the loop if query is inferred
-        # Check if any new facts were inferred and update agenda accordingly
-        new_facts = [fact for fact in inferred if fact not in agenda]
-        agenda.extend(new_facts)
+                            break
+            elif "<=>" in clause:
+                parts = clause.split("<=>")
+                if len(parts) != 2:
+                    continue
+                left, right = parts
+                left = left.strip()
+                right = right.strip()
+                if (left in inferred and right not in inferred) or (right in inferred and left not in inferred):
+                    inferred.add(left)
+                    inferred.add(right)
+                    agenda_queue.append(left)
+                    agenda_queue.append(right)
+                    activated = True
+                    if left == query or right == query:
+                        break
 
-    return "YES" if query in inferred else "NO", sorted(list(inferred))
-
+    return "YES" if query in inferred else "NO", agenda_queue
 
 def backward_chaining(kb, query):
-    inferred = set()  # To keep track of all checked facts
-    facts = [clause for clause in kb if "=>" not in clause]
-    chain = []  # To store the inference chain leading to the query
+    inferred = set()
+    facts = [clause for clause in kb if "=>" not in clause and "<=>" not in clause]
+    chain = []
 
     def bc_ask(q):
         if q in facts:
@@ -100,10 +115,13 @@ def backward_chaining(kb, query):
             return True
         if q in inferred:
             return True
-        inferred.add(q)  # Mark this as visited
+        inferred.add(q)
         for rule in kb:
             if "=>" in rule:
-                premises, conclusion = rule.split("=>")
+                parts = rule.split("=>")
+                if len(parts) != 2:
+                    continue
+                premises, conclusion = parts
                 if conclusion.strip() == q:
                     premises = premises.split("&")
                     if all(bc_ask(prem.strip()) for prem in premises):
@@ -111,6 +129,21 @@ def backward_chaining(kb, query):
                             chain.extend([prem.strip() for prem in premises if prem.strip() not in chain])
                             chain.append(q)
                         return True
+            elif "<=>" in rule:
+                parts = rule.split("<=>")
+                if len(parts) != 2:
+                    continue
+                left, right = parts
+                if left.strip() == q and bc_ask(right.strip()):
+                    if q not in chain:
+                        chain.append(right.strip())
+                        chain.append(left.strip())
+                    return True
+                if right.strip() == q and bc_ask(left.strip()):
+                    if q not in chain:
+                        chain.append(left.strip())
+                        chain.append(right.strip())
+                    return True
         return False
 
     result = bc_ask(query)
