@@ -53,59 +53,42 @@ def truth_table_check(kb, query):
     symbols = {symbol for clause in kb for symbol in re.findall(r'\w+', clause)}
     models = 0
     entailed = False
+
     for values in product([False, True], repeat=len(symbols)):
         assignment = dict(zip(symbols, values))
         if all(evaluate(clause, assignment) for clause in kb):
             models += 1
             if evaluate(query, assignment):
                 entailed = True
-    return ("YES" if entailed else "NO"), models
+
+    return "YES" if entailed else "NO", models
 
 def forward_chaining(kb, query):
     inferred = set()
-    agenda = [clause for clause in kb if "=>" not in clause and "<=>" not in clause]
+    agenda = {clause for clause in kb if "=>" not in clause and "<=>" not in clause}
     inferred.update(agenda)
-    agenda_queue = list(agenda)  # Maintain order of inference
+    agenda_list = list(agenda)  
 
     activated = True
     while activated:
         activated = False
         for clause in kb:
             if "=>" in clause:
-                parts = clause.split("=>")
-                if len(parts) != 2:
-                    continue
-                premises, conclusion = parts
+                premises, conclusion = map(str.strip, clause.split("=>"))
                 premises = [prem.strip() for prem in premises.split("&")]
-                conclusion = conclusion.strip()
                 if conclusion not in inferred:
                     if all(prem in inferred for prem in premises):
                         inferred.add(conclusion)
-                        agenda_queue.append(conclusion)
+                        agenda_list.append(conclusion)
                         activated = True
                         if conclusion == query:
                             break
-            elif "<=>" in clause:
-                parts = clause.split("<=>")
-                if len(parts) != 2:
-                    continue
-                left, right = parts
-                left = left.strip()
-                right = right.strip()
-                if (left in inferred and right not in inferred) or (right in inferred and left not in inferred):
-                    inferred.add(left)
-                    inferred.add(right)
-                    agenda_queue.append(left)
-                    agenda_queue.append(right)
-                    activated = True
-                    if left == query or right == query:
-                        break
 
-    return "YES" if query in inferred else "NO", agenda_queue
+    return "YES" if query in inferred else "NO", agenda_list
 
 def backward_chaining(kb, query):
     inferred = set()
-    facts = [clause for clause in kb if "=>" not in clause and "<=>" not in clause]
+    facts = {clause for clause in kb if "=>" not in clause and "<=>" not in clause}
     chain = []
 
     def bc_ask(q):
@@ -118,11 +101,8 @@ def backward_chaining(kb, query):
         inferred.add(q)
         for rule in kb:
             if "=>" in rule:
-                parts = rule.split("=>")
-                if len(parts) != 2:
-                    continue
-                premises, conclusion = parts
-                if conclusion.strip() == q:
+                premises, conclusion = map(str.strip, rule.split("=>"))
+                if conclusion == q:
                     premises = premises.split("&")
                     if all(bc_ask(prem.strip()) for prem in premises):
                         if q not in chain:
@@ -130,19 +110,11 @@ def backward_chaining(kb, query):
                             chain.append(q)
                         return True
             elif "<=>" in rule:
-                parts = rule.split("<=>")
-                if len(parts) != 2:
-                    continue
-                left, right = parts
-                if left.strip() == q and bc_ask(right.strip()):
+                left, right = map(str.strip, rule.split("<=>"))
+                if (left == q and bc_ask(right)) or (right == q and bc_ask(left)):
                     if q not in chain:
-                        chain.append(right.strip())
-                        chain.append(left.strip())
-                    return True
-                if right.strip() == q and bc_ask(left.strip()):
-                    if q not in chain:
-                        chain.append(left.strip())
-                        chain.append(right.strip())
+                        chain.append(right if left == q else left)
+                        chain.append(q)
                     return True
         return False
 
